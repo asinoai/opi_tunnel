@@ -80,44 +80,59 @@ app.get('/', (req, res) => {
 const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
-  const tunnelId = uuidv4().substring(0, 8); // Use a shorter, random ID
   const clientIP = req.socket.remoteAddress;
-
-  console.log(`[${new Date().toISOString()}] New tunnel connection: ${tunnelId} from ${clientIP}`);
-
-  tunnels.set(tunnelId, {
-    socket: ws,
-    createdAt: Date.now(),
-    lastActivity: Date.now()
-  });
+  console.log(`[${new Date().toISOString()}] New client connected from ${clientIP}, waiting for registration.`);
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
-      const tunnel = tunnels.get(tunnelId);
 
-      if (!tunnel) return;
-
-      tunnel.lastActivity = Date.now();
-
+      // The first message from a client MUST be 'register'
       if (data.type === 'register') {
+        let tunnelId = data.subdomain; // Get the requested name from the client
+
+        // If no name was provided, generate a random one.
+        if (!tunnelId) {
+          tunnelId = uuidv4().substring(0, 8);
+        }
+
+        // If the requested name is already in use, reject the connection.
+        if (tunnels.has(tunnelId)) {
+          ws.send(JSON.stringify({ type: 'error', message: `Tunnel name '${tunnelId}' is already in use.` }));
+          ws.close();
+          return;
+        }
+
+        // The name is valid and available, so register the tunnel.
+        console.log(`[${new Date().toISOString()}] Registering tunnel: ${tunnelId}`);
+        ws.tunnelId = tunnelId; // Attach the ID to the websocket session for cleanup
+
+        tunnels.set(tunnelId, {
+          socket: ws,
+          createdAt: Date.now(),
+          lastActivity: Date.now(),
+          pendingResponse: null
+        });
+
+        // Send confirmation back to the client
         const host = req.headers.host || process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost';
         const tunnelUrl = `https://${host}/t/${tunnelId}`;
-
         ws.send(JSON.stringify({
           type: 'registered',
-          subdomain: tunnelId, // We send the ID in the 'subdomain' field for client compatibility
+          subdomain: tunnelId,
           url: tunnelUrl,
           tunnelId: tunnelId
         }));
-
-        console.log(`[${new Date().toISOString()}] Tunnel registered: ${tunnelId}`);
+        return; // Registration is complete for this message.
       }
 
-      if (data.type === 'response') {
+      // Handle 'response' messages from already registered tunnels
+      const tunnel = tunnels.get(ws.tunnelId);
+      if (data.type === 'response' && tunnel) {
+        tunnel.lastActivity = Date.now();
         if (tunnel.pendingResponse) {
           const res = tunnel.pendingResponse;
-
+          // ... (The rest of the response handling logic remains the same)
           try {
             if (data.headers) {
               Object.entries(data.headers).forEach(([key, value]) => {
@@ -134,9 +149,7 @@ wss.on('connection', (ws, req) => {
             }
           } catch (error) {
             console.error('Error sending response:', error);
-            if (!res.headersSent) {
-              res.status(500).json({ error: 'Response handling error' });
-            }
+            if (!res.headersSent) { res.status(500).json({ error: 'Response handling error' }); }
           }
           delete tunnel.pendingResponse;
         }
@@ -147,12 +160,17 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log(`[${new Date().toISOString()}] Tunnel disconnected: ${tunnelId}`);
-    tunnels.delete(tunnelId);
+    // If the tunnel was successfully registered, clean it up from the map.
+    if (ws.tunnelId && tunnels.has(ws.tunnelId)) {
+      console.log(`[${new Date().toISOString()}] Tunnel disconnected: ${ws.tunnelId}`);
+      tunnels.delete(ws.tunnelId);
+    } else {
+      console.log(`[${new Date().toISOString()}] Unregistered client disconnected.`);
+    }
   });
 
   ws.on('error', (error) => {
-    console.error(`WebSocket error for tunnel ${tunnelId}:`, error);
+    console.error(`WebSocket error for tunnel ${ws.tunnelId || 'unregistered'}:`, error);
   });
 });
 
