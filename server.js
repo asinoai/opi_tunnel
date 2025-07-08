@@ -1,9 +1,8 @@
-// server/server.js - Optimized for Render.com deployment
+// server/server.js - Optimized for Render.com deployment with path-based routing
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,8 +16,8 @@ app.use(express.raw({ limit: '10mb', type: 'application/octet-stream' }));
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     tunnels: tunnels.size,
     timestamp: new Date().toISOString()
   });
@@ -26,11 +25,11 @@ app.get('/health', (req, res) => {
 
 // Dashboard endpoint
 app.get('/', (req, res) => {
+  const host = req.headers.host || process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost';
   const activeTunnels = Array.from(tunnels.entries()).map(([id, tunnel]) => ({
-    id: id.substring(0, 8),
-    subdomain: tunnel.subdomain,
+    id: id,
     connected: tunnel.socket.readyState === WebSocket.OPEN,
-    url: tunnel.subdomain ? `https://${tunnel.subdomain}.${req.get('host')}` : null
+    url: `https://${host}/t/${id}`
   }));
 
   res.send(`
@@ -47,23 +46,22 @@ app.get('/', (req, res) => {
         .connected { background: #d4edda; color: #155724; }
         .disconnected { background: #f8d7da; color: #721c24; }
         .no-tunnels { text-align: center; color: #666; margin: 40px 0; }
-        code { background: #f1f1f1; padding: 2px 4px; border-radius: 3px; }
+        code { background: #f1f1f1; padding: 2px 4px; border-radius: 3px; word-break: break-all; }
       </style>
     </head>
     <body>
       <div class="container">
         <h1>🚇 Tunnel Proxy Dashboard</h1>
-        <p>Server running on <strong>${req.get('host')}</strong></p>
         
-        ${activeTunnels.length > 0 ? 
+        ${activeTunnels.length > 0 ?
           `<h2>Active Tunnels (${activeTunnels.length})</h2>
            ${activeTunnels.map(tunnel => `
              <div class="tunnel">
-               <strong>${tunnel.subdomain || tunnel.id}</strong>
+               <strong>Tunnel ID: ${tunnel.id}</strong>
                <span class="status ${tunnel.connected ? 'connected' : 'disconnected'}">
                  ${tunnel.connected ? 'Connected' : 'Disconnected'}
                </span>
-               ${tunnel.url ? `<br><code>${tunnel.url}</code>` : ''}
+               <br><code>${tunnel.url}</code>
              </div>
            `).join('')}` :
           '<div class="no-tunnels">No active tunnels</div>'
@@ -71,7 +69,7 @@ app.get('/', (req, res) => {
         
         <h2>Usage</h2>
         <p>Connect your local client:</p>
-        <code>TUNNEL_SERVER=wss://${req.get('host')} LOCAL_PORT=3000 node client.js</code>
+        <code>TUNNEL_SERVER=wss://${host} LOCAL_PORT=3000 java -jar your-client.jar</code>
       </div>
     </body>
     </html>
@@ -79,23 +77,16 @@ app.get('/', (req, res) => {
 });
 
 // WebSocket server for tunnel connections
-const wss = new WebSocket.Server({ 
-  server,
-  verifyClient: (info) => {
-    // Basic verification - you can add authentication here
-    return true;
-  }
-});
+const wss = new WebSocket.Server({ server });
 
 wss.on('connection', (ws, req) => {
-  const tunnelId = uuidv4();
+  const tunnelId = uuidv4().substring(0, 8); // Use a shorter, random ID
   const clientIP = req.socket.remoteAddress;
-  
+
   console.log(`[${new Date().toISOString()}] New tunnel connection: ${tunnelId} from ${clientIP}`);
-  
+
   tunnels.set(tunnelId, {
     socket: ws,
-    subdomain: null,
     createdAt: Date.now(),
     lastActivity: Date.now()
   });
@@ -104,45 +95,30 @@ wss.on('connection', (ws, req) => {
     try {
       const data = JSON.parse(message);
       const tunnel = tunnels.get(tunnelId);
-      
+
       if (!tunnel) return;
-      
+
       tunnel.lastActivity = Date.now();
-      
+
       if (data.type === 'register') {
-        // Generate subdomain - use provided or create random
-        let subdomain = data.subdomain;
-        if (!subdomain) {
-          subdomain = tunnelId.substring(0, 8);
-        }
-        
-        // Check if subdomain is already taken
-        const existingTunnel = Array.from(tunnels.values()).find(t => t.subdomain === subdomain);
-        if (existingTunnel && existingTunnel.socket !== ws) {
-          subdomain = `${subdomain}-${Date.now().toString(36)}`;
-        }
-        
-        tunnel.subdomain = subdomain;
-        
-        const tunnelUrl = `https://${subdomain}.${req.get('host') || 'localhost'}`;
-        
+        const host = req.headers.host || process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost';
+        const tunnelUrl = `https://${host}/t/${tunnelId}`;
+
         ws.send(JSON.stringify({
           type: 'registered',
-          subdomain: subdomain,
+          subdomain: tunnelId, // We send the ID in the 'subdomain' field for client compatibility
           url: tunnelUrl,
           tunnelId: tunnelId
         }));
-        
-        console.log(`[${new Date().toISOString()}] Tunnel registered: ${subdomain} -> ${tunnelId}`);
+
+        console.log(`[${new Date().toISOString()}] Tunnel registered: ${tunnelId}`);
       }
-      
+
       if (data.type === 'response') {
-        // Forward response back to the original HTTP request
         if (tunnel.pendingResponse) {
           const res = tunnel.pendingResponse;
-          
+
           try {
-            // Set headers
             if (data.headers) {
               Object.entries(data.headers).forEach(([key, value]) => {
                 if (key.toLowerCase() !== 'content-length') {
@@ -150,16 +126,9 @@ wss.on('connection', (ws, req) => {
                 }
               });
             }
-            
-            // Send response
             res.status(data.statusCode || 200);
-            
             if (data.body) {
-              if (typeof data.body === 'string') {
-                res.send(data.body);
-              } else {
-                res.json(data.body);
-              }
+              res.send(typeof data.body === 'string' ? data.body : JSON.stringify(data.body));
             } else {
               res.end();
             }
@@ -169,7 +138,6 @@ wss.on('connection', (ws, req) => {
               res.status(500).json({ error: 'Response handling error' });
             }
           }
-          
           delete tunnel.pendingResponse;
         }
       }
@@ -188,41 +156,34 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// HTTP request handler for proxying
+// HTTP request handler for proxying - MODIFIED FOR PATH-BASED ROUTING
 app.use('*', (req, res) => {
-  const host = req.get('host');
-  const subdomain = host.split('.')[0];
-  
-  // Skip if it's the main domain (dashboard)
-  if (subdomain === host.replace(/:\d+$/, '')) {
-    return res.status(404).json({ error: 'Not found' });
+  // Match requests like /t/tunnel-id/some/path
+  const match = req.url.match(/^\/t\/([a-zA-Z0-9-]+)(\/.*)?$/);
+
+  if (!match) {
+    return res.status(404).json({ error: 'Not a valid tunnel URL. Use the format /t/<tunnel-id>/path' });
   }
-  
-  // Find tunnel by subdomain
-  let targetTunnel = null;
-  for (const [tunnelId, tunnel] of tunnels) {
-    if (tunnel.subdomain === subdomain) {
-      targetTunnel = { tunnelId, ...tunnel };
-      break;
-    }
-  }
-  
+
+  const tunnelId = match[1];
+  const remainingUrl = match[2] || '/'; // The rest of the path
+
+  const targetTunnel = tunnels.get(tunnelId);
+
   if (!targetTunnel) {
-    return res.status(404).json({ 
+    return res.status(404).json({
       error: 'Tunnel not found',
-      subdomain: subdomain,
-      availableTunnels: Array.from(tunnels.values()).map(t => t.subdomain).filter(Boolean)
+      tunnelId: tunnelId,
+      availableTunnels: Array.from(tunnels.keys())
     });
   }
-  
+
   if (targetTunnel.socket.readyState !== WebSocket.OPEN) {
     return res.status(503).json({ error: 'Tunnel not connected' });
   }
-  
-  // Store the response object to send back later
+
   targetTunnel.pendingResponse = res;
-  
-  // Prepare request body
+
   let body = null;
   if (req.body) {
     if (Buffer.isBuffer(req.body)) {
@@ -233,17 +194,16 @@ app.use('*', (req, res) => {
       body = req.body;
     }
   }
-  
-  // Forward request to tunnel client
+
   const requestData = {
     type: 'request',
     method: req.method,
-    url: req.url,
+    url: remainingUrl, // Use the path AFTER the tunnel ID
     headers: req.headers,
     body: body,
     timestamp: Date.now()
   };
-  
+
   try {
     targetTunnel.socket.send(JSON.stringify(requestData));
   } catch (error) {
@@ -251,29 +211,29 @@ app.use('*', (req, res) => {
     delete targetTunnel.pendingResponse;
     return res.status(502).json({ error: 'Failed to forward request' });
   }
-  
-  // Set timeout for response
+
   const timeout = setTimeout(() => {
     if (targetTunnel.pendingResponse === res) {
       console.log(`Request timeout for tunnel ${targetTunnel.tunnelId}`);
-      res.status(504).json({ error: 'Gateway timeout' });
+      if (!res.headersSent) {
+          res.status(504).json({ error: 'Gateway timeout' });
+      }
       delete targetTunnel.pendingResponse;
     }
-  }, 30000); // 30 second timeout
-  
-  // Clear timeout when response is sent
-  const originalEnd = res.end;
-  res.end = function(...args) {
-    clearTimeout(timeout);
-    return originalEnd.apply(this, args);
-  };
+  }, 30000);
+
+  res.on('finish', () => {
+      clearTimeout(timeout);
+      delete targetTunnel.pendingResponse;
+  });
 });
+
 
 // Cleanup inactive tunnels
 setInterval(() => {
   const now = Date.now();
   const inactiveThreshold = 5 * 60 * 1000; // 5 minutes
-  
+
   for (const [tunnelId, tunnel] of tunnels) {
     if (now - tunnel.lastActivity > inactiveThreshold) {
       console.log(`Cleaning up inactive tunnel: ${tunnelId}`);
@@ -286,10 +246,8 @@ setInterval(() => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`[${new Date().toISOString()}] Tunnel proxy server running on port ${PORT}`);
-  console.log(`Dashboard: http://localhost:${PORT}`);
 });
 
-// Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down gracefully...');
   server.close(() => {
