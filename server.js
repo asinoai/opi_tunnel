@@ -158,9 +158,9 @@ wss.on('connection', (ws, req) => {
 
 // HTTP request handler for proxying - MODIFIED FOR PATH-BASED ROUTING
 app.use('*', (req, res) => {
-  console.error('Proxying call:', req.url);
+  console.error('Proxying call:', req.originalUrl);
   // Match requests like /t/tunnel-id/some/path
-  const match = req.url.match(/^\/t\/([a-zA-Z0-9-]+)(\/.*)?$/);
+  const match = req.originalUrl.match(/^\/t\/([a-zA-Z0-9-]+)(\/.*)?$/);
 
   if (!match) {
     return res.status(404).json({ error: 'Not a valid tunnel URL. Use the format /t/<tunnel-id>/path' });
