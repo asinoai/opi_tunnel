@@ -54,7 +54,7 @@ app.get('/', (req, res) => {
         <h1>🚇 Tunnel Proxy Dashboard</h1>
         
         ${activeTunnels.length > 0 ?
-          `<h2>Active Tunnels (${activeTunnels.length})</h2>
+      `<h2>Active Tunnels (${activeTunnels.length})</h2>
            ${activeTunnels.map(tunnel => `
              <div class="tunnel">
                <strong>Tunnel ID: ${tunnel.id}</strong>
@@ -64,12 +64,12 @@ app.get('/', (req, res) => {
                <br><code>${tunnel.url}</code>
              </div>
            `).join('')}` :
-          '<div class="no-tunnels">No active tunnels</div>'
-        }
+      '<div class="no-tunnels">No active tunnels</div>'
+  }
         
         <h2>Usage</h2>
-        <p>Connect your local client:</p>
-        <code>TUNNEL_SERVER=wss://${host} LOCAL_PORT=3000 java -jar your-client.jar</code>
+        <p>Connect your local client, specifying a tunnel name:</p>
+        <code>TUNNEL_SERVER=wss://${host} LOCAL_PORT=3000 TUNNEL_NAME=my-app node client.js</code>
       </div>
     </body>
     </html>
@@ -89,7 +89,8 @@ wss.on('connection', (ws, req) => {
 
       // The first message from a client MUST be 'register'
       if (data.type === 'register') {
-        let tunnelId = data.subdomain; // Get the requested name from the client
+        // Get the requested name from the client's 'tunnelName' property.
+        let tunnelId = data.tunnelName;
 
         // If no name was provided, generate a random one.
         if (!tunnelId) {
@@ -119,7 +120,7 @@ wss.on('connection', (ws, req) => {
         const tunnelUrl = `https://${host}/t/${tunnelId}`;
         ws.send(JSON.stringify({
           type: 'registered',
-          subdomain: tunnelId,
+          tunnelName: tunnelId, // Use tunnelName in the response
           url: tunnelUrl,
           tunnelId: tunnelId
         }));
@@ -235,15 +236,15 @@ app.use('*', (req, res) => {
     if (targetTunnel.pendingResponse === res) {
       console.log(`Request timeout for tunnel ${targetTunnel.tunnelId}`);
       if (!res.headersSent) {
-          res.status(504).json({ error: 'Gateway timeout' });
+        res.status(504).json({ error: 'Gateway timeout' });
       }
       delete targetTunnel.pendingResponse;
     }
   }, 30000);
 
   res.on('finish', () => {
-      clearTimeout(timeout);
-      delete targetTunnel.pendingResponse;
+    clearTimeout(timeout);
+    delete targetTunnel.pendingResponse;
   });
 });
 
