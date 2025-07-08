@@ -13,6 +13,7 @@ const tunnels = new Map();
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.raw({ limit: '10mb', type: 'application/octet-stream' }));
+app.use(express.text({ limit: '10mb', type: ['text/xml', 'application/xml'] }));
 
 // Health check endpoint for Render
 app.get('/health', (req, res) => {
@@ -69,7 +70,7 @@ app.get('/', (req, res) => {
         
         <h2>Usage</h2>
         <p>Connect your local client, specifying a tunnel name:</p>
-        <code>TUNNEL_SERVER=wss://${host} LOCAL_PORT=3000 TUNNEL_NAME=my-app node client.js</code>
+        <code>TUNNEL_SERVER=wss://${host} LOCAL_PORT=3000 TUNNEL_NAME=my-app java -jar opi_tunnel_client.jar</code>
       </div>
     </body>
     </html>
