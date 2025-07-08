@@ -1,1 +1,30 @@
-
+{
+  "name": "tunnel-proxy-server",
+  "version": "1.0.0",
+  "description": "Tunnel proxy server for Render.com deployment",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "tunnel",
+    "proxy",
+    "reverse-proxy",
+    "ngrok-alternative",
+    "render"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
