@@ -69,8 +69,9 @@ app.get('/', (req, res) => {
   }
         
         <h2>Usage</h2>
-        <p>Connect your local client, specifying a tunnel name:</p>
-        <code>TUNNEL_SERVER=wss://${host} LOCAL_PORT=3000 TUNNEL_NAME=my-app java -jar opi_tunnel_client.jar</code>
+          <p>Download the latest <code>jar</code> from <a href="https://github.com/asinoai/opi_tunnel_client/packages/2576484" target="_blank" rel="noopener noreferrer">GitHub Packages</a>.</p>
+          <p>Then, you can run it like this:</p>
+          <code>java -jar ~/Downloads/tunnel-client-1.0.0.jar</code>
       </div>
     </body>
     </html>
